@@ -1,0 +1,155 @@
+#############################################################################
+# NMAKE [debug=1]
+#############################################################################
+#
+# Notes:
+#  - Real-mode 16-bit assembler, compiler and linker are needed for builing
+#    the boot & DOS tools
+#  - Project make is run on Win32 environment.
+#  - Make sure tools and paths match your environment
+#
+#############################################################################
+
+T       =C:\Tools
+
+VER     =2_03
+
+!ifdef  debug
+DBUG    =/DDBG=1
+!else
+DBUG    =/DDBG=0
+!endif
+
+D       =..\dist
+B16     =$(D)\bin16
+B32     =$(D)\bin32
+ASM     =$(T)\masm5 /Isrc $(DBUG)
+LNK16   =$(T)\link16 $(LFLAGS)
+ZIP     =7z.exe a -r
+IFD     =$(B32)\ImageFD.exe
+MKISO   =$(T)\mkisofs.exe -v -udf -c boot.catalog
+
+SRCS = src\sp_main.asm src\sp_load.asm src\sp_boot.asm \
+       src\sp_core.asm src\sp_dasm.asm src\sp_disp.asm \
+       src\sp_keyb.asm src\sp_help.asm src\sp_cmdl.asm \
+       src\sp_cdbt.asm
+
+INCS = src\htools.inc src\softprob.inc
+
+DOCS = docs\SOFTPROB.docx docs\SOFTPROB.pdf docs\README.TXT
+
+R    = build
+B    = $(R)\BootCD
+S    = $(B)\SProbe
+I    = dosfiles
+PRGS = $(S)\SOFTPROB.EXE $(S)\BOOTPROB.EXE $(S)\SPL.EXE
+
+# Build targets
+
+all:    init $(S)\BOOT_FD.IMG $(R)\BOOT_CD.ISO $(R)\TOOL_CD.ISO
+rel:    all $(R)\SProbe$(VER).zip
+files:  $(R)\SProbeSrc$(VER).zip
+
+clean:
+    @del /q /s $(R)\*.* >nul 2>nul
+
+init:
+    @if not exist $(R)\*.* mkdir $(R)
+    @if not exist $(B)\*.* mkdir $(B)
+    @if not exist $(S)\*.* mkdir $(S)
+    
+# ___________________________________________________________________________
+#
+#  Create images for bootable floppy(1.44MB) and CD
+# ___________________________________________________________________________
+$(S)\BOOTPROB.DAT: $(PRGS) makefile
+    $(IFD) $@ F144 -o src\FreeDos.dat
+    $(IFD) $@ A -av SProbeBoot -ashr $(I)\KERNEL.SYS $(I)\COMMAND.COM \
+    $(I)\CONFIG.SYS $(I)\AUTOEXEC.BAT -ad BIN -ar $(I)\BIN\*.* \
+    $(S)\SOFTPROB.EXE $(S)\SPL.EXE
+    
+$(S)\BOOT_FD.IMG : $(PRGS) makefile $(S)\BOOTPROB.EXE $(S)\BOOTPROB.DAT
+    @del /Q $@ >nul 2>nul
+    CD $(S)
+    BOOTPROB.exe
+    CD "$(MAKEDIR)"
+    @copy $@ $(R)
+    
+$(R)\BOOT_CD.ISO: $(S)\BOOT_FD.IMG $(PRGS) $(DOCS) 
+    @del /Q $@ >nul 2>nul
+    @copy /b docs\SOFTPROB.PDF $(S)\SOFTPROB.PDF
+    @copy docs\README.TXT $(S)\README.TXT
+    @copy /b $(S)\BOOT_FD.IMG $(B)\BOOT_FD.IMG
+    CD $(R)
+    $(MKISO) -b BOOT_FD.IMG -boot-load-seg 0x7c0 -V "SoftProbe" \
+    -hide boot.catalog -o BOOT_CD.ISO BootCD 
+    CD "$(MAKEDIR)"
+    
+$(R)\TOOL_CD.ISO: $(S)\BOOT_FD.IMG $(DOCS) 
+    @del /Q $@ >nul 2>nul
+    @if not exist $(R)\ToolCD\*.* mkdir $(R)\ToolCD
+    @if not exist $(R)\ToolCD\DosTools\*.* mkdir $(R)\ToolCD\DosTools
+    @copy /b $(S)\SOFTPROB.EXE $(R)\ToolCD\DosTools\SOFTPROB.EXE
+    @copy /b docs\SOFTPROB.PDF $(R)\ToolCD\DosTools\SOFTPROB.PDF
+    @copy /b $(S)\SPL.EXE      $(R)\ToolCD\DosTools\SPL.EXE
+    @copy /b $(S)\BOOT_FD.IMG  $(R)\ToolCD\DosTools\BOOT_FD.IMG
+    @copy /b $(S)\BOOT_FD.IMG  $(R)\ToolCD\BOOT_FD.IMG
+    @copy /b dosfiles\bin\*.*  $(R)\ToolCD\DosTools
+    CD $(R)
+    $(MKISO) -b BOOT_FD.IMG -boot-load-seg 0x7c0 -V "SoftProbe" \
+    -hide boot.catalog -o TOOL_CD.ISO ToolCD 
+    CD "$(MAKEDIR)"
+    
+# ___________________________________________________________________________
+#
+#  Executables
+# ___________________________________________________________________________
+$(S)\SOFTPROB.EXE: src\sp_main.asm src\sp_core.asm src\sp_disp.asm \
+    src\sp_keyb.asm src\sp_dasm.asm src\sp_help.asm src\sp_cmdl.asm $(INCS)
+    $(ASM) src\sp_main.asm;
+    $(LNK16) sp_main,$@;
+    @del sp_main.obj
+    @del SOFTPROB.map
+    
+# Floppy boot image creator
+$(S)\BOOTPROB.EXE: src\sp_boot.asm src\sp_core.asm src\sp_disp.asm \
+    src\sp_keyb.asm src\sp_dasm.asm src\sp_help.asm src\sp_cmdl.asm $(INCS)
+    $(ASM) /D_BOOT src\sp_boot.asm;
+    $(LNK16) sp_boot,$@;
+    @del sp_boot.obj
+    @del BOOTPROB.map
+
+$(S)\SPL.EXE: src\sp_load.asm $(INCS)
+    $(ASM) src\sp_load.asm;
+    $(LNK16) sp_load,$@;
+    @del sp_load.obj
+    @del SPL.map
+    
+# ___________________________________________________________________________
+#
+#  Release files
+# ___________________________________________________________________________
+dist: all
+    @copy /b $(S)\SOFTPROB.EXE $(D)\bin16
+    @copy /b $(S)\BOOTPROB.EXE $(D)\bin16
+    @copy /b $(S)\SPL.EXE      $(D)\bin16
+    @copy /b docs\SOFTPROB.PDF $(D)\docs
+    @copy /b ..\README.*       $(D)
+    @copy /b $(S)\BOOT_FD.IMG  $(D)\images
+    @copy /b $(R)\BOOT_CD.ISO  $(D)\images
+
+$(R)\SProbe$(VER).zip: all
+    @del $@ 1>nul 2>nul
+    CD "$(R)"
+    $(ZIP) "$(MAKEDIR)\$@" *.iso *.img
+    CD BootCD
+    $(ZIP) "$(MAKEDIR)\$@" SProbe\*.*
+    CD "$(MAKEDIR)"
+
+# ___________________________________________________________________________
+#
+#  Source files
+# ___________________________________________________________________________
+$(R)\SProbeSrc$(VER).zip: $(SRCS) $(DOCS) MakeFile 
+    @del $@
+    $(ZIP) $@ src\*.* tools\*.* $(I)\*.* $(DOCS) MakeFile
